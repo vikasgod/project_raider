@@ -8,7 +8,6 @@ type MongooseCache = {
 };
 
 const cached: MongooseCache = global.mongooseConn ?? (global.mongooseConn = { conn: null, promise: null });
-
 export async function connectDB() {
   if (cached.conn) {
     console.log("Using cached MongoDB connection");
