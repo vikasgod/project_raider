@@ -23,7 +23,7 @@ app.use(express.json());
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: process.env.NEXT_BASE_URL,
+    origin: process.env.NEXT_BASE_URL
   },
 });
 
@@ -50,14 +50,12 @@ io.on("connection", (socket) => {
   });
 
   socket.on("update-location", async ({ userId, latitude, longitude }) => {
-    console.log("111location updated");
     await User.findByIdAndUpdate(userId, {
       location: {
         type: "Point",
         coordinates: [longitude, latitude],
       },
     });
-    console.log("location updated");
   });
 
   socket.on("join-ride",(bookingId)=>{

@@ -3,7 +3,14 @@ import React, { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import axios from "axios";
 import { IBooking } from "@/models/booking.modal";
-import { Clock, IndianRupee, Loader2, MapPin, Navigation } from "lucide-react";
+import {
+  ArrowLeft,
+  Clock,
+  IndianRupee,
+  Loader2,
+  MapPin,
+  Navigation,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { getSocket } from "@/lib/soket";
 
@@ -56,16 +63,31 @@ function Page() {
   return (
     <div className="min-h-screen bg-[#f4f5f7">
       <div className="bg-white border-b border-gray-200">
-        <div className="max-w-6xl mx-auto px-6 py-16">
-          <h1 className="text-4xl font-semibold text-gray-900">
-            Ride Requests
-          </h1>
-          <p className="mt-3 text-gray-500 text-lg">
-            Manage incoming ride requests and respond in real time
-          </p>
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-10 sm:py-14">
+          <div className="flex items-start gap-4">
+            {/* Back Button */}
+            <button
+              onClick={() => router.back()}
+              className="mt-1 shrink-0 w-10 h-10 rounded-full border border-gray-300 bg-white flex items-center justify-center text-gray-700 hover:bg-gray-100 hover:border-gray-400 transition-all duration-200"
+              aria-label="Go back"
+            >
+              <ArrowLeft size={18} />
+            </button>
+
+            {/* Heading Content */}
+            <div>
+              <h1 className="text-3xl sm:text-4xl font-semibold text-gray-900 leading-tight">
+                Ride Requests
+              </h1>
+
+              <p className="mt-2 text-gray-500 text-base sm:text-lg">
+                Manage incoming ride requests and respond in real time
+              </p>
+            </div>
+          </div>
         </div>
       </div>
-      <div className="max-w-6xl mx-auto px-6 py-12">
+      <div className="ma  x-w-6xl mx-auto px-6 py-12">
         {loading ? (
           <div className="flex justify-center py-20">
             <Loader2 className="animate-spin w-8 h-8 text-gray-700" />

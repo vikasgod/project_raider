@@ -196,7 +196,7 @@ function AuthModal({ open, onClose }: propType) {
                         Don't have a account?{" "}
                         <div
                           onClick={() => setStep("signup")}
-                          className="text-black font-medium hover:underline"
+                          className="text-black font-medium hover:underline cursor-pointer"
                         >
                           Sign Up
                         </div>
@@ -272,7 +272,7 @@ function AuthModal({ open, onClose }: propType) {
                         Already have a account{" "}
                         <span
                           onClick={() => setStep("login")}
-                          className="text-black font-medium hover:underline"
+                          className="text-black font-medium hover:underline cursor-pointer"
                         >
                           Login
                         </span>

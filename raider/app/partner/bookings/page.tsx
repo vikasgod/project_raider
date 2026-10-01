@@ -4,6 +4,7 @@ import { IUser } from "@/models/user.model";
 import { IVehicle } from "@/models/vehicle.model";
 import axios from "axios";
 import {
+  ArrowLeft,
   Bike,
   Calendar,
   Car,
@@ -123,19 +124,32 @@ function Page() {
     <div className="min-h-screen bg-gray-50">
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="max-w-3xl mx-auto py-6">
-            <div className="flex items-center gap-3">
-              <div className="bg-blue-100 p-2 rounded-lg">
-                <Car size={20} className="w-5 h-5 text-blue-600 " />
+          <div className="max-w-3xl mx-auto py-8">
+            <div className="flex items-center gap-4">
+              {/* Back Button */}
+              <button
+                onClick={() => router.back()}
+                className="shrink-0 w-10 h-10 rounded-full border border-gray-300 bg-white flex items-center justify-center text-gray-700 hover:bg-gray-100 hover:border-gray-400 transition-all duration-200"
+                aria-label="Go back"
+              >
+                <ArrowLeft size={18} />
+              </button>
+
+              {/* Car Icon */}
+              <div className="shrink-0 w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                <Car size={20} className="text-blue-600" />
               </div>
+
+              {/* Content */}
               <div>
-                <h1 className="text-2xl font-semibold text-gray-900">
+                <h1 className="text-2xl sm:text-3xl font-semibold text-gray-900 leading-tight">
                   Partner Bookings
                 </h1>
+
                 <p className="text-sm text-gray-500 mt-1">
-                  {bookings?.length}{" "}
-                  {bookings.length === 1 ? "ride " : "rides "}
-                  assigned to you
+                  {bookings?.length || 0}{" "}
+                  {(bookings?.length || 0) === 1 ? "ride" : "rides"} assigned to
+                  you
                 </p>
               </div>
             </div>

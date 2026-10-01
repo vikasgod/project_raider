@@ -3,6 +3,7 @@ import axios from "axios";
 import {
   CheckCircle,
   Clock,
+  LogOut,
   Truck,
   User,
   Users,
@@ -16,6 +17,7 @@ import TabButton from "./tabButton";
 import { motion, AnimatePresence } from "motion/react";
 import ContentList from "./contentList";
 import AdminEarning from "./adminEarning";
+import { signOut } from "next-auth/react";
 
 type FinalData = {
   totalPartner: number;
@@ -67,9 +69,19 @@ function AdminDashboard() {
               priority
             />
           </div>
-          <div className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-full bg-black text-white">
-            <User size={14} />
-            Admin Dashboard
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-full bg-black text-white">
+              <User size={14} />
+              Admin Dashboard
+            </div>
+            <button
+              type="button"
+              onClick={() => signOut({ redirectTo: "/" })}
+              className="flex items-center gap-2 rounded-full border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-100"
+            >
+              <LogOut size={14} />
+              Logout
+            </button>
           </div>
         </div>
       </div>
