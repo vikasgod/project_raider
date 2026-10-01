@@ -56,6 +56,7 @@ io.on("connection", (socket) => {
         coordinates: [longitude, latitude],
       },
     });
+    console.log("location updated");
   });
 
   socket.on("join-ride",(bookingId)=>{
