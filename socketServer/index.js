@@ -50,6 +50,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("update-location", async ({ userId, latitude, longitude }) => {
+    console.log("111location updated");
     await User.findByIdAndUpdate(userId, {
       location: {
         type: "Point",
