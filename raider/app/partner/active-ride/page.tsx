@@ -436,7 +436,7 @@ function Page() {
                   </div>
                   <div className="p-4 spacee-y-3">
                     <p className="text-xs text-zinc-500">
-                      Ask the cistomer for their 4-digit OTP to start the ride
+                      Ask the customer for their 4-digit OTP to start the ride
                     </p>
                     <div className="flex justify-center">
                       <input
@@ -445,7 +445,7 @@ function Page() {
                           setOtp(e.target.value.replace(/\D/g, ""));
                           setOtpError("");
                         }}
-                        placeholder=". . . ."
+                        placeholder="- - - -"
                         className="w-48 border-2 border-zinc-200 
                           focus:border-zinc-900 rounded-xl px-4 py-3
                           text-center text-2xl tracking-[0.5em] font-black

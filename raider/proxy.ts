@@ -5,7 +5,6 @@ const PUBLIC_ROUTES = ["/"];
 const PUBLIC_API_PREFIX = "/api/auth";
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
-  const session = await auth();
   if (
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon.ico") ||
@@ -20,6 +19,8 @@ export async function proxy(req: NextRequest) {
   if (pathname === PUBLIC_API_PREFIX || pathname.startsWith(`${PUBLIC_API_PREFIX}/`)) {
     return NextResponse.next();
   }
+
+  const session = await auth();
 
   if (!session) {
     return NextResponse.redirect(new URL("/", req.url));
