@@ -22,6 +22,10 @@ export async function proxy(req: NextRequest) {
 
   const session = await auth();
 
+  if (pathname.startsWith("/api") && !session?.user) {
+    return NextResponse.json({ message: "unauthorized" }, { status: 401 });
+  }
+
   if (!session) {
     return NextResponse.redirect(new URL("/", req.url));
   }
@@ -38,17 +42,6 @@ export async function proxy(req: NextRequest) {
     }
     if (role != "partner") {
       return NextResponse.redirect(new URL("/", req.url));
-    }
-  }
-
-  if (pathname.startsWith("/api")) {
-    if (!session || !session.user) {
-      return Response.json(
-        {
-          message: "unauthorize",
-        },
-        { status: 401 },
-      );
     }
   }
 

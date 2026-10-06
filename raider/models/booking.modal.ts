@@ -38,6 +38,8 @@ export interface IBooking {
     paymentStatus: PaymentStatus;
 
     paymentDeadline: Date;
+    razorpayOrderId?: string;
+    razorpayPaymentId?: string;
 
     adminCommission: number;
     partnerAmount: number;
@@ -118,6 +120,12 @@ const BookingSchema = new mongoose.Schema<IBooking>({
 
     paymentDeadline: {
         type: Date
+    },
+    razorpayOrderId: {
+        type: String,
+    },
+    razorpayPaymentId: {
+        type: String,
     },
 
     adminCommission: {

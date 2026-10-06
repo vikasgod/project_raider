@@ -3,27 +3,25 @@ import React, { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowRight,
-  Banknote,
   Bike,
   Car,
   CheckCircle,
   Clock,
   CreditCard,
-  Currency,
   IndianRupee,
   Loader2,
   MapPin,
   Navigation,
   ShieldCheck,
   Truck,
-  Wallet,
   XCircle,
+  type LucideIcon,
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import axios from "axios";
 import { getSocket } from "@/lib/soket";
 
-const VEHICLE_META: any = {
+const VEHICLE_META: Record<string, { label: string; Icon: LucideIcon }> = {
   bike: { label: "Bike", Icon: Bike },
   auto: { label: "Auto", Icon: Car },
   car: { label: "Car", Icon: Car },
@@ -36,9 +34,13 @@ type Status =
   | "requested"
   | "awaiting_payment"
   | "confirmed"
-  | "payment"
   | "rejected"
   | "expired";
+
+type CheckoutBooking = {
+  _id: string;
+  bookingStatus: Status;
+};
 
 function CheckOutContent() {
   const router = useRouter();
@@ -55,13 +57,14 @@ function CheckOutContent() {
   const pickupLog = params.get("pickupLog") ?? "";
   const dropLat = params.get("dropLat") ?? "";
   const dropLog = params.get("dropLog") ?? "";
-  const { Icon, label } = VEHICLE_META[vehicle];
+  const { Icon } = VEHICLE_META[vehicle] ?? VEHICLE_META.car;
   const [status, setStatus] = useState<Status>("idle");
   const [loading, setLoading] = useState(false);
-  const [booking, setBooking] = useState<any>();
-  const [paymentMethod, setPaymentMethod] = useState<"cash" | "online">("cash");
+  const [booking, setBooking] = useState<CheckoutBooking>();
+  const [requestError, setRequestError] = useState("");
 
   const handleRequestBooking = async () => {
+    setRequestError("");
     try {
       setLoading(true);
       const { data } = await axios.post("/api/booking/create", {
@@ -83,16 +86,24 @@ function CheckOutContent() {
       setBooking(data);
       setLoading(false);
       setStatus("requested");
-    } catch (error: any) {
+      router.push(`/user/ride/${data._id}`);
+    } catch (error: unknown) {
       setLoading(false);
-      console.log("error", error.response.data);
+      setRequestError(
+        axios.isAxiosError(error)
+          ? error.response?.data?.message ?? "Could not request this ride."
+          : "Could not request this ride.",
+      );
     }
   };
 
   useEffect(() => {
     const socket = getSocket();
     socket.on("accept-booking", (data) => {
-      setStatus(data);
+      setStatus("confirmed");
+      if (data?.bookingId) {
+        router.push(`/user/ride/${data.bookingId}`);
+      }
     });
 
     socket.on("reject-booking", (data) => {
@@ -114,89 +125,28 @@ function CheckOutContent() {
     };
   }, []);
 
-  const loadRazorpayScript = () => {
-    return new Promise((resolve) => {
-      if (typeof window === "undefined") {
-        resolve(false);
-        return;
-      }
-
-      if ((window as any).Razorpay) {
-        resolve(true);
-        return;
-      }
-
-      const script = document.createElement("script");
-      script.src = "https://checkout.razorpay.com/v1/checkout.js";
-      script.async = true;
-      script.onload = () => resolve(true);
-      script.onerror = () => resolve(false);
-      document.body.appendChild(script);
-    });
-  };
-
-  const handleConfirmPayment = async () => {
-    console.log(paymentMethod, booking);
-    if (!booking || !paymentMethod) return;
-    setLoading(true);
-    try {
-      if (paymentMethod === "online") {
-        const razorpayLoaded = await loadRazorpayScript();
-        if (!razorpayLoaded) {
-          alert("Razorpay not loaded");
-          return;
-        }
-        const { data } = await axios.post("/api/payment/create", {
-          bookingId: booking._id,
-        });
-        const options = {
-          key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
-          amount: data.amount,
-          Currency: "INR",
-          name: "Rider",
-          description: "Rider Payment",
-          order_id: data.orderId,
-          handler: async function (response: any) {
-            const { data } = await axios.post("/api/payment/verify", {
-              bookingId: booking._id,
-              ...response,
-            });
-            setLoading(false);
-            if (data.success) {
-              setStatus("confirmed");
-              window.location.href = `/user/ride/${booking._id}`;
-            }
-          },
-        };
-        const paymentObject = new (window as any).Razorpay(options);
-        paymentObject.open();
-      } else {
-        const { data } = await axios.get(`/api/booking/${booking._id}/confirm`);
-        setLoading(false);
-        if (data.success) {
-          setStatus("confirmed");
-          window.location.href = `/user/ride/${booking._id}`;
-        }
-      }
-    } catch (error) {
-      setLoading(false);
-      console.log(error);
-    }
-  };
-
   const fetchActiveBookings = async () => {
     try {
       const { data } = await axios.get("/api/booking/active");
+      if (!data.booking || typeof data.booking !== "object") {
+        setBooking(undefined);
+        setStatus("idle");
+        return;
+      }
       setBooking(data.booking);
-      setStatus(data.booking.bookingStatus || data.booking);
+      setStatus(data.booking.bookingStatus);
+      if (["awaiting_payment", "confirmed", "started"].includes(data.booking.bookingStatus)) {
+        router.replace(`/user/ride/${data.booking._id}`);
+      }
     } catch (error) {
       console.log(error);
     }
   };
 
   const handleCancel = async () => {
+    if (!booking) return;
     try {
-      const { data } = await axios.get(`/api/booking/${booking._id}/cancel`);
+      await axios.post(`/api/booking/${booking._id}/cancel`);
       setStatus("idle");
     } catch (error) {
       console.log(error);
@@ -204,16 +154,11 @@ function CheckOutContent() {
   };
 
   useEffect(() => {
-    fetchActiveBookings();
+    const timer = window.setTimeout(() => {
+      void fetchActiveBookings();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
-
-  useEffect(() => {
-    if (status !== "awaiting_payment") return;
-    const t = setTimeout(() => {
-      setStatus("payment");
-    }, 2000);
-    return () => clearTimeout(t);
-  }, [status]);
 
   return (
     <div className="min-h-screen bg-zinc-100 px-4 py-12">
@@ -358,7 +303,7 @@ function CheckOutContent() {
                         {[
                           {
                             icon: <Clock size={14} />,
-                            text: "Driver will respond within 2 minites",
+                            text: "Driver will respond to your ride request",
                           },
                           {
                             icon: <ShieldCheck size={14} />,
@@ -366,7 +311,7 @@ function CheckOutContent() {
                           },
                           {
                             icon: <CreditCard size={14} />,
-                            text: "Pay after driver accepts",
+                            text: "Pay after the ride, then confirm drop with OTP",
                           },
                         ].map((item, i) => (
                           <div key={i} className="flex items-center gap-3">
@@ -385,13 +330,19 @@ function CheckOutContent() {
                       whileTap={{ scale: 0.97 }}
                       whileHover={{ scale: 1.02 }}
                       onClick={handleRequestBooking}
+                      disabled={loading}
                       className="w-full h-14 mt-8 bg-zinc-900 hover:bg-black disabled:opacity-40
                      text-white font-black text-sm rounded-2xl flex items-center justify-center
                      gap-2.5 transition-colors shadow-md"
                     >
-                      <span>Request Ride</span>
-                      <ArrowRight size={15} />
+                      <span>{loading ? "Sending Request..." : "Request Ride"}</span>
+                      {!loading && <ArrowRight size={15} />}
                     </motion.button>
+                    {requestError && (
+                      <p role="alert" className="mt-3 text-sm text-red-600">
+                        {requestError}
+                      </p>
+                    )}
                   </motion.div>
                 )}
                 {status == "requested" && (
@@ -486,126 +437,7 @@ function CheckOutContent() {
                   </motion.div>
                 )}
 
-                {status === "payment" && (
-                  <motion.div
-                    key="payment"
-                    initial={{ opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.3 }}
-                    className="flex flex-col flex-1 gap-6"
-                  >
-                    <div>
-                      <p
-                        className="text-[10px] font-black uppercase tracking-[0.18em]
-                      text-zinc-400 mb-1"
-                      >
-                        Almost there!
-                      </p>
-                      <h3 className="text-2xl font-black text-zinc-900">
-                        Select Payment Method
-                      </h3>
-                    </div>
-                    <div className="space-y-3">
-                      {[
-                        {
-                          id: "cash",
-                          Icon: Banknote,
-                          title: "Cash",
-                          sub: "Pay driver after ride",
-                        },
-                        {
-                          id: "online",
-                          Icon: Wallet,
-                          title: "Online Payment",
-                          sub: "UPI . Card . netbanking",
-                        },
-                      ].map((p, i) => {
-                        const active = paymentMethod === p.id;
-                        return (
-                          <motion.div
-                            key={p.id}
-                            whileTap={{ scale: 0.97 }}
-                            onClick={() => setPaymentMethod(p.id as any)}
-                            className={`w-full flex items-center gap-4 p-4 rounded-2xl border-2 
-                            text-left transition-all duration-200 ${
-                              active
-                                ? "bg-zinc-900 border-zinc-900"
-                                : "bg-zinc-50 border-zinc-200 hover:border-zinc-400"
-                            }`}
-                          >
-                            <div
-                              className={`w-10 h-10 rounded-xl flex items-center justify-center
-                              flex-shring-0 transition-colors ${
-                                active ? "bg-white/10" : "bg-zinc-200"
-                              }`}
-                            >
-                              <p.Icon
-                                size={18}
-                                className={
-                                  active ? "text-white" : "text-zinc-600"
-                                }
-                              />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p
-                                className={`text-sm font-bold ${active ? "text-white" : "text-zinc-900"}`}
-                              >
-                                {p.title}
-                              </p>
-                              <p
-                                className={`text-xs font-medium text-zinc-400`}
-                              >
-                                {p.sub}
-                              </p>
-                            </div>
-
-                            <AnimatePresence>
-                              {active && (
-                                <motion.div
-                                  initial={{ scale: 0 }}
-                                  animate={{ scale: 1 }}
-                                  exit={{ scale: 0 }}
-                                >
-                                  <CheckCircle
-                                    size={16}
-                                    className="text-white flex-shrink-0"
-                                  />
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </motion.div>
-                        );
-                      })}
-                    </div>
-
-                    <motion.button
-                      onClick={handleConfirmPayment}
-                      whileTap={{ scale: 0.97 }}
-                      whileHover={paymentMethod ? { scale: 1.02 } : {}}
-                      disabled={!paymentMethod}
-                      className="w-full h-14 bg-zinc-900 hover:bg-black disabled:opacity-30
-                    text-white font-black text-sm rounded-2xl flex items-center justify-center gap-2.5
-                    transition-colors shadow-md mt-auto"
-                    >
-                      {loading ? (
-                        <Loader2 size={17} className="animate-spin" />
-                      ) : paymentMethod === "cash" ? (
-                        <>
-                          <Banknote size={16} />
-                          <span>Confirm Cash Ride</span>
-                        </>
-                      ) : (
-                        <>
-                          <span>Proceed to Payment</span>
-                          <ArrowRight size={16} />
-                        </>
-                      )}
-                    </motion.button>
-                  </motion.div>
-                )}
-
-                {status === "confirmed" && (
+                {status === "confirmed" && booking && (
                   <motion.div
                     key="confirmed"
                     initial={{ opacity: 0, scale: 0.94 }}
@@ -665,7 +497,7 @@ function CheckOutContent() {
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: 0.5 }}
                       onClick={() => {
-                        window.location.href = `/ride/${booking._id}`;
+                        router.push(`/user/ride/${booking._id}`);
                       }}
                       className="flex items-center gap-2.5 bg-zinc-900 hover:lg-black text-white font-black text-sm
                       px-8 py-4 rounded-2xl transition-colors shadow-md"

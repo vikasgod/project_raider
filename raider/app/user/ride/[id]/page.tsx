@@ -6,9 +6,10 @@ import React, { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { ChevronUp, Zap } from "lucide-react";
 import PanelContent from "@/components/panelContent";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { getSocket } from "@/lib/soket";
 import CompletedScreen from "@/components/completedScreen";
+import RidePaymentActions from "@/components/ridePaymentActions";
 
 const LiveRideMap = dynamic(() => import("@/components/liveRideMap"), {
   ssr: false,
@@ -99,7 +100,7 @@ const PAYMENT_BADGE: Record<PaymentStatus, { label: string; cls: string }> = {
 
 function Page() {
   const [bookings, setBookings] = useState<IBooking>();
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [driverPos, setDriverPos] = useState<[number, number] | null>(null);
   const [pickUpPos, setPickUpPos] = useState<[number, number] | null>(null);
   const [dropPos, setDropPos] = useState<[number, number] | null>(null);
@@ -110,15 +111,56 @@ function Page() {
   const [status, setStatus] = useState("");
   const [chatOpen, setChatOpen] = useState(false);
   const [expand, setExpand] = useState(false);
+  const [cancelLoading, setCancelLoading] = useState(false);
+  const [cancelError, setCancelError] = useState("");
+  const router = useRouter();
   const { id } = useParams();
+
+  const cancelRide = async () => {
+    if (!bookings) return;
+    setCancelLoading(true);
+    setCancelError("");
+    try {
+      await axios.post(`/api/booking/${bookings._id.toString()}/cancel`);
+      setStatus("cancelled");
+      setBookings((previous) =>
+        previous ? { ...previous, bookingStatus: "cancelled" } : previous,
+      );
+    } catch (error) {
+      setCancelError(
+        axios.isAxiosError(error)
+          ? error.response?.data?.message ?? "Could not cancel this ride."
+          : "Could not cancel this ride.",
+      );
+    } finally {
+      setCancelLoading(false);
+    }
+  };
+
   useEffect(() => {
+    let mounted = true;
     async function fetchData() {
-      setLoading(true);
       try {
         const { data } = await axios.post("/api/user/active-ride", {
           bookingId: id,
         });
-        setBookings(data);
+        if (!mounted) return;
+        setBookings((previous) => {
+          if (!previous || previous._id.toString() !== data._id.toString()) {
+            return data;
+          }
+
+          const paymentWasRecorded =
+            previous.paymentStatus === "paid" || previous.paymentStatus === "cash";
+          if (
+            paymentWasRecorded &&
+            data.paymentStatus === "pending"
+          ) {
+            return { ...data, paymentStatus: previous.paymentStatus };
+          }
+
+          return data;
+        });
         setStatus(data.bookingStatus);
         setPickUpPos([
           data.pickUpLocation.coordinates[1],
@@ -128,14 +170,19 @@ function Page() {
           data.dropLocation.coordinates[1],
           data.dropLocation.coordinates[0],
         ]);
-        setLoading(false);
       } catch (error) {
         console.log(error);
-        setLoading(false);
+      } finally {
+        if (mounted) setLoading(false);
       }
     }
     fetchData();
-  }, []);
+    const interval = window.setInterval(fetchData, 5000);
+    return () => {
+      mounted = false;
+      window.clearInterval(interval);
+    };
+  }, [id]);
 
   useEffect(() => {
     const socket = getSocket();
@@ -169,13 +216,39 @@ function Page() {
   if (status === "completed" && bookings) {
     return <CompletedScreen booking={bookings} role="user" />;
   }
-  const cgf = STATUS_LABEL[bookings?.bookingStatus! ?? "confirmed"];
+  if (["rejected", "cancelled", "expired"].includes(status)) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-zinc-950 px-6 text-center text-white">
+        <h1 className="text-2xl font-bold">
+          {status === "rejected" ? "Driver declined this ride" : "Ride request ended"}
+        </h1>
+        <p className="text-zinc-400">
+          No payment was taken. You can go back and request another ride.
+        </p>
+        <button
+          type="button"
+          onClick={() => router.push("/")}
+          className="rounded-xl bg-white px-5 py-3 font-semibold text-zinc-900"
+        >
+          Back to home
+        </button>
+      </div>
+    );
+  }
+  if (!bookings && !loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-white">
+        Ride not found or you do not have access to it.
+      </div>
+    );
+  }
+  const cgf = STATUS_LABEL[bookings?.bookingStatus ?? "confirmed"];
   const isActive = ["confirmed", "started"].includes(status);
   const displayEta = status === "confirmed" ? etaToPickUp : etaToDrop;
   const displayDistance =
     status === "confirmed" ? distanceTopPickUp : distanceTopDrop;
   const canChat = bookings?.bookingStatus === "confirmed";
-  const paymentStatus = PAYMENT_BADGE[bookings?.paymentStatus! ?? "pending"];
+  const paymentStatus = PAYMENT_BADGE[bookings?.paymentStatus ?? "pending"];
   const panelProps = {
     isActive,
     displayDistance,
@@ -197,7 +270,7 @@ function Page() {
           driverLocation={driverPos}
           pickUpLocation={pickUpPos}
           dropLocation={dropPos}
-          mapStatus={MAP_STATUS[bookings?.bookingStatus! ?? "idle"]}
+          mapStatus={MAP_STATUS[bookings?.bookingStatus ?? "idle"]}
           onStats={({
             distanceToPickUp,
             etaToPickUp,
@@ -259,6 +332,29 @@ function Page() {
           <div className="flex-1 overflow-y-auto scorllbar-hide">
             <PanelContent {...panelProps} />
           </div>
+          {bookings?.bookingStatus === "requested" && (
+            <div className="border-t border-zinc-100 p-4">
+              <button
+                type="button"
+                onClick={cancelRide}
+                disabled={cancelLoading}
+                className="w-full rounded-xl border border-zinc-200 px-4 py-3 font-semibold text-zinc-700 disabled:opacity-50"
+              >
+                {cancelLoading ? "Cancelling..." : "Cancel ride request"}
+              </button>
+              {cancelError && <p role="alert" className="mt-2 text-sm text-red-600">{cancelError}</p>}
+            </div>
+          )}
+          {bookings && (
+            <RidePaymentActions
+              booking={bookings}
+              onPaymentUpdated={(paymentStatus) =>
+                setBookings((previous) =>
+                  previous ? { ...previous, paymentStatus } : previous,
+                )
+              }
+            />
+          )}
         </div>
       </motion.div>
 
@@ -320,6 +416,29 @@ function Page() {
           <div className="flex-1 overflow-y-auto min-h-0">
             <PanelContent {...panelProps} />
           </div>
+          {bookings?.bookingStatus === "requested" && (
+            <div className="border-t border-zinc-100 p-4">
+              <button
+                type="button"
+                onClick={cancelRide}
+                disabled={cancelLoading}
+                className="w-full rounded-xl border border-zinc-200 px-4 py-3 font-semibold text-zinc-700 disabled:opacity-50"
+              >
+                {cancelLoading ? "Cancelling..." : "Cancel ride request"}
+              </button>
+              {cancelError && <p role="alert" className="mt-2 text-sm text-red-600">{cancelError}</p>}
+            </div>
+          )}
+          {bookings && (
+            <RidePaymentActions
+              booking={bookings}
+              onPaymentUpdated={(paymentStatus) =>
+                setBookings((previous) =>
+                  previous ? { ...previous, paymentStatus } : previous,
+                )
+              }
+            />
+          )}
         </motion.div>
       </div>
     </div>

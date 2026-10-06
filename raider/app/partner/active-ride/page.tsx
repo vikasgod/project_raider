@@ -2,14 +2,13 @@
 import { BookingStatus, IBooking, PaymentStatus } from "@/models/booking.modal";
 import axios from "axios";
 import dynamic from "next/dynamic";
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowRight,
   ChevronUp,
   KeyRound,
   MapPin,
-  Navigation,
   Zap,
 } from "lucide-react";
 import PanelContent from "@/components/panelContent";
@@ -105,7 +104,7 @@ const PAYMENT_BADGE: Record<PaymentStatus, { label: string; cls: string }> = {
 
 function Page() {
   const [bookings, setBookings] = useState<IBooking | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [driverPos, setDriverPos] = useState<[number, number] | null>(null);
   const [pickUpPos, setPickUpPos] = useState<[number, number] | null>(null);
   const [dropPos, setDropPos] = useState<[number, number] | null>(null);
@@ -124,10 +123,12 @@ function Page() {
   const [otpError, setOtpError] = useState("");
 
   // drop otp
-  const [dropOtpMode, setDropOtpMode] = useState(false);
   const [dropOtp, setDropOtp] = useState("");
+  const [dropOtpSending, setDropOtpSending] = useState(false);
+  const [dropOtpSent, setDropOtpSent] = useState(false);
   const [loadingDropOtp, setLoadingDropOtp] = useState(false);
   const [dropOtpError, setDropOtpError] = useState("");
+  const dropOtpRequestedFor = useRef<string | null>(null);
 
   const handleSendPickupOtp = async () => {
     try {
@@ -144,16 +145,27 @@ function Page() {
     }
   };
 
-  const handleSendDropOtp = async () => {
+  const handleSendDropOtp = useCallback(async (bookingId: string, resend = false) => {
+    setDropOtpError("");
+    setDropOtpSending(true);
     try {
-      const { data } = await axios.post("/api/partner/bookings/otp/drop/send", {
-        bookingId: bookings?._id,
+      await axios.post("/api/partner/bookings/otp/drop/send", {
+        bookingId,
+        resend,
       });
-      setDropOtpMode(true);
+      setDropOtpSent(true);
     } catch (error) {
       console.log(error);
+      setDropOtpSent(false);
+      setDropOtpError(
+        axios.isAxiosError(error)
+          ? error.response?.data?.message ?? "Could not send drop OTP"
+          : "Could not send drop OTP",
+      );
+    } finally {
+      setDropOtpSending(false);
     }
-  };
+  }, []);
 
   const handleVerifyPickupOtp = async () => {
     setLoadingOtp(true);
@@ -173,10 +185,14 @@ function Page() {
         prev ? { ...prev, bookingStatus: "started" } : prev,
       );
       console.log("first", data);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.log(error);
       setLoadingOtp(false);
-      setOtpError(error.response.data.message ?? "Verification failed");
+      setOtpError(
+        axios.isAxiosError(error)
+          ? error.response?.data?.message ?? "Verification failed"
+          : "Verification failed",
+      );
     }
   };
 
@@ -191,30 +207,51 @@ function Page() {
         },
       );
       setLoadingDropOtp(false);
-      setDropOtpMode(true);
       setStatus("completed");
       setBookings((prev) =>
         prev ? { ...prev, bookingStatus: "completed" } : prev,
       );
-    } catch (error: any) {
+      setDropOtp("");
+    } catch (error: unknown) {
       console.log(error);
       setLoadingDropOtp(false);
-      setDropOtpError(error.response.data.message ?? "Verification failed");
+      setDropOtpError(
+        axios.isAxiosError(error)
+          ? error.response?.data?.message ?? "Verification failed"
+          : "Verification failed",
+      );
     }
   };
 
   useEffect(() => {
+    let mounted = true;
     async function fetchData() {
-      setLoading(true);
       try {
         const { data } = await axios.get("/api/partner/my-active");
+        if (!mounted) return;
 
         if (!data) {
-          setLoading(false);
-          setBookings(null);
+          setBookings((previous) =>
+            previous?.bookingStatus === "completed" ? previous : null,
+          );
           return;
         }
-        setBookings(data);
+        setBookings((previous) => {
+          if (!previous || previous._id.toString() !== data._id.toString()) {
+            return data;
+          }
+
+          const paymentWasRecorded =
+            previous.paymentStatus === "paid" || previous.paymentStatus === "cash";
+          if (
+            paymentWasRecorded &&
+            data.paymentStatus === "pending"
+          ) {
+            return { ...data, paymentStatus: previous.paymentStatus };
+          }
+
+          return data;
+        });
         setStatus(data.bookingStatus);
         setPickUpPos([
           data.pickUpLocation.coordinates[1],
@@ -224,14 +261,35 @@ function Page() {
           data.dropLocation.coordinates[1],
           data.dropLocation.coordinates[0],
         ]);
-        setLoading(false);
       } catch (error) {
         console.log(error);
-        setLoading(false);
+      } finally {
+        if (mounted) setLoading(false);
       }
     }
     fetchData();
+    const interval = window.setInterval(fetchData, 5000);
+    return () => {
+      mounted = false;
+      window.clearInterval(interval);
+    };
   }, []);
+
+  useEffect(() => {
+    const bookingId = bookings?._id.toString();
+    if (
+      !bookings ||
+      !bookingId ||
+      status !== "started" ||
+      !["paid", "cash"].includes(bookings.paymentStatus) ||
+      dropOtpRequestedFor.current === bookingId
+    ) {
+      return;
+    }
+
+    dropOtpRequestedFor.current = bookingId;
+    void handleSendDropOtp(bookingId);
+  }, [bookings?._id, bookings?.paymentStatus, handleSendDropOtp, status]);
 
   useEffect(() => {
     if (!navigator.geolocation) return;
@@ -309,13 +367,13 @@ function Page() {
     return <CompletedScreen booking={bookings} role="driver" />;
   }
 
-  const cgf = STATUS_LABEL[bookings?.bookingStatus! ?? "confirmed"];
+  const cgf = STATUS_LABEL[bookings?.bookingStatus ?? "confirmed"];
   const isActive = ["confirmed", "started"].includes(status);
   const displayEta = status === "confirmed" ? etaToPickUp : etaToDrop;
   const displayDistance =
     status === "confirmed" ? distanceTopPickUp : distanceTopDrop;
   const canChat = bookings?.bookingStatus === "confirmed";
-  const paymentStatus = PAYMENT_BADGE[bookings?.paymentStatus! ?? "pending"];
+  const paymentStatus = PAYMENT_BADGE[bookings?.paymentStatus ?? "pending"];
   const panelProps = {
     isActive,
     displayDistance,
@@ -337,7 +395,7 @@ function Page() {
           driverLocation={driverPos}
           pickUpLocation={pickUpPos}
           dropLocation={dropPos}
-          mapStatus={MAP_STATUS[bookings?.bookingStatus! ?? "idle"]}
+          mapStatus={MAP_STATUS[bookings?.bookingStatus ?? "idle"]}
           onStats={({
             distanceToPickUp,
             etaToPickUp,
@@ -415,7 +473,7 @@ function Page() {
                     text-white py-4 rounded-2xl font-bold text-sm tracking-widde
                     transition-all flex items-center justify-center gap-2"
                 >
-                  <MapPin size={16} /> I've Arrived at Pickup
+                  <MapPin size={16} /> Arrived at Pickup
                   <ArrowRight size={15} />
                 </motion.button>
               )}
@@ -495,23 +553,18 @@ function Page() {
                 </motion.div>
               )}
 
-              {status === "started" && !dropOtpMode && (
-                <motion.button
-                  key="drop"
-                  onClick={() => handleSendDropOtp()}
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -6 }}
-                  className="w-full bg-zinc-900 hover:bg-zinc-800 active:scale-[0.97]
-                    text-white py-4 rounded-2xl font-bold text-sm tracking-widde
-                    transition-all flex items-center justify-center gap-2"
-                >
-                  <Navigation size={16} /> Mark as Dropped
-                  <ArrowRight size={15} />
-                </motion.button>
+              {status === "started" && bookings.paymentStatus === "pending" && (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                  Ask the customer to pay the fare of ₹{bookings.fare.toFixed(2)} first. The drop OTP is sent after payment.
+                </div>
+              )}
+              {status === "started" && dropOtpError && (
+                <p role="alert" className="text-sm text-red-600">{dropOtpError}</p>
               )}
 
-              {status === "started" && dropOtpMode && (
+              {status === "started" &&
+                ["paid", "cash"].includes(bookings.paymentStatus) &&
+                (
                 <motion.div
                   initial={{ opacity: 0, y: 10, scale: 0.97 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -527,8 +580,14 @@ function Page() {
                   </div>
                   <div className="p-4 spacee-y-3">
                     <p className="text-xs text-zinc-500">
-                      Ask the cistomer for their 4-digit OTP to complete the
-                      ride
+                      Payment received: ₹{bookings.fare.toFixed(2)}. Enter the drop OTP sent to the customer to complete this ride.
+                    </p>
+                    <p className={`text-center text-xs ${dropOtpSent ? "text-emerald-700" : dropOtpError ? "text-red-600" : "text-zinc-500"}`}>
+                      {dropOtpSending
+                        ? "Sending drop OTP to customer..."
+                        : dropOtpSent
+                          ? "Drop OTP sent to customer."
+                          : "Drop OTP could not be sent yet."}
                     </p>
                     <div className="flex justify-center">
                       <input
@@ -556,20 +615,8 @@ function Page() {
                     )}
                     <div className="flex gap-2 mt-2">
                       <button
-                        onClick={() => {
-                          setDropOtpMode(false);
-                          setDropOtp("");
-                          setDropOtpError("");
-                        }}
-                        className="flex-1 border border-zinc-200 bg-white text-zinc-700 py-2.5
-                          rounded-xl text-sm font-semibold active:scale-[0.98] transition-all"
-                      >
-                        Cancel
-                      </button>
-
-                      <button
                         onClick={handleVerifyDropOtp}
-                        disabled={loadingDropOtp || dropOtp.length < 4}
+                        disabled={loadingDropOtp || !dropOtpSent || dropOtp.length < 4}
                         className="flex-1 bg-zinc-900 hover:bg-zinc-800
                       disabled:opacity-40 text-white py-2.5 rounded-xl text-sm font-bold active:scale-[0.97]      
                       transition-all"
@@ -583,6 +630,14 @@ function Page() {
                         )}
                       </button>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleSendDropOtp(bookings._id.toString(), true)}
+                      disabled={dropOtpSending}
+                      className="w-full py-2 text-xs font-semibold text-zinc-600 underline disabled:opacity-50"
+                    >
+                      {dropOtpSending ? "Sending..." : "Resend drop OTP"}
+                    </button>
                   </div>
                 </motion.div>
               )}
@@ -664,7 +719,7 @@ function Page() {
                     text-white py-4 rounded-2xl font-bold text-sm tracking-widde
                     transition-all flex items-center justify-center gap-2"
                 >
-                  <MapPin size={16} /> I've Arrived at Pickup
+                  <MapPin size={16} /> Arrived at Pickup
                   <ArrowRight size={15} />
                 </motion.button>
               )}
@@ -744,23 +799,18 @@ function Page() {
                 </motion.div>
               )}
 
-              {status === "started" && !dropOtpMode && (
-                <motion.button
-                  key="drop"
-                  onClick={() => handleSendDropOtp()}
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -6 }}
-                  className="w-full bg-zinc-900 hover:bg-zinc-800 active:scale-[0.97]
-                    text-white py-4 rounded-2xl font-bold text-sm tracking-widde
-                    transition-all flex items-center justify-center gap-2"
-                >
-                  <Navigation size={16} /> Mark as Dropped
-                  <ArrowRight size={15} />
-                </motion.button>
+              {status === "started" && bookings.paymentStatus === "pending" && (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                  Ask the customer to pay the fare of ₹{bookings.fare.toFixed(2)} first. The drop OTP is sent after payment.
+                </div>
+              )}
+              {status === "started" && dropOtpError && (
+                <p role="alert" className="text-sm text-red-600">{dropOtpError}</p>
               )}
 
-              {status === "started" && dropOtpMode && (
+              {status === "started" &&
+                ["paid", "cash"].includes(bookings.paymentStatus) &&
+                (
                 <motion.div
                   initial={{ opacity: 0, y: 10, scale: 0.97 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -776,8 +826,14 @@ function Page() {
                   </div>
                   <div className="p-4 spacee-y-3">
                     <p className="text-xs text-zinc-500">
-                      Ask the cistomer for their 4-digit OTP to complete the
-                      ride
+                      Payment received: ₹{bookings.fare.toFixed(2)}. Enter the drop OTP sent to the customer to complete this ride.
+                    </p>
+                    <p className={`text-center text-xs ${dropOtpSent ? "text-emerald-700" : dropOtpError ? "text-red-600" : "text-zinc-500"}`}>
+                      {dropOtpSending
+                        ? "Sending drop OTP to customer..."
+                        : dropOtpSent
+                          ? "Drop OTP sent to customer."
+                          : "Drop OTP could not be sent yet."}
                     </p>
                     <div className="flex justify-center">
                       <input
@@ -805,20 +861,8 @@ function Page() {
                     )}
                     <div className="flex gap-2 mt-2">
                       <button
-                        onClick={() => {
-                          setDropOtpMode(false);
-                          setDropOtp("");
-                          setDropOtpError("");
-                        }}
-                        className="flex-1 border border-zinc-200 bg-white text-zinc-700 py-2.5
-                          rounded-xl text-sm font-semibold active:scale-[0.98] transition-all"
-                      >
-                        Cancel
-                      </button>
-
-                      <button
                         onClick={handleVerifyDropOtp}
-                        disabled={loadingDropOtp || dropOtp.length < 4}
+                        disabled={loadingDropOtp || !dropOtpSent || dropOtp.length < 4}
                         className="flex-1 bg-zinc-900 hover:bg-zinc-800
                       disabled:opacity-40 text-white py-2.5 rounded-xl text-sm font-bold active:scale-[0.97]      
                       transition-all"
@@ -832,6 +876,14 @@ function Page() {
                         )}
                       </button>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleSendDropOtp(bookings._id.toString(), true)}
+                      disabled={dropOtpSending}
+                      className="w-full py-2 text-xs font-semibold text-zinc-600 underline disabled:opacity-50"
+                    >
+                      {dropOtpSending ? "Sending..." : "Resend drop OTP"}
+                    </button>
                   </div>
                 </motion.div>
               )}
