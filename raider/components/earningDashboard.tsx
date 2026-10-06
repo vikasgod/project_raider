@@ -7,6 +7,8 @@ import {
   Check,
   Filter,
   Star,
+  TrendingDown,
+  TrendingUp,
   Wallet,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
@@ -64,6 +66,12 @@ function formatCurrency(amount: number) {
   return `₹${amount.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 }
 
+function addDays(dateKey: string, days: number) {
+  const date = new Date(`${dateKey}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 function EarningDashboard({
   endpoint,
   audience,
@@ -72,11 +80,14 @@ function EarningDashboard({
   audience: "Partner" | "Admin";
 }) {
   const [earningData, setEarningData] = useState<Earning[]>([]);
-  const [range, setRange] = useState<EarningRange>("today");
+  const [previousEarningData, setPreviousEarningData] = useState<Earning[]>([]);
+  const [range, setRange] = useState<EarningRange>("week");
   const [startDate, setStartDate] = useState(getTodayDate);
   const [endDate, setEndDate] = useState(getTodayDate);
-  const [appliedDates, setAppliedDates] =
-    useState<{ startDate: string; endDate: string }>();
+  const [appliedDates, setAppliedDates] = useState<{
+    startDate: string;
+    endDate: string;
+  }>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -92,15 +103,44 @@ function EarningDashboard({
             ...(appliedDates ?? {}),
           },
         });
-        if (active) setEarningData(data);
+        let previousData: Earning[] = [];
+        if (data.length) {
+          const firstDate = data[0].date;
+          const lastDate = data[data.length - 1].date;
+          const duration =
+            (Date.parse(`${lastDate}T00:00:00.000Z`) -
+              Date.parse(`${firstDate}T00:00:00.000Z`)) /
+              86_400_000 +
+            1;
+          const previousEnd = addDays(firstDate, -1);
+          const previousStart = addDays(previousEnd, 1 - duration);
+          try {
+            const response = await axios.get<Earning[]>(endpoint, {
+              params: {
+                range: "custom",
+                startDate: previousStart,
+                endDate: previousEnd,
+              },
+            });
+            previousData = response.data;
+          } catch {
+            previousData = [];
+          }
+        }
+        if (active) {
+          setEarningData(data);
+          setPreviousEarningData(previousData);
+        }
       } catch (fetchError) {
         if (active) {
           setError(
             axios.isAxiosError(fetchError)
-              ? fetchError.response?.data?.message ?? "Could not load earnings."
+              ? (fetchError.response?.data?.message ??
+                  "Could not load earnings.")
               : "Could not load earnings.",
           );
           setEarningData([]);
+          setPreviousEarningData([]);
         }
       } finally {
         if (active) setLoading(false);
@@ -117,6 +157,21 @@ function EarningDashboard({
   const bestEarning = earningData.length
     ? Math.max(...earningData.map((day) => day.earnings))
     : 0;
+  const previousTotal = previousEarningData.reduce(
+    (sum, day) => sum + day.earnings,
+    0,
+  );
+  const previousAverage = previousEarningData.length
+    ? previousTotal / previousEarningData.length
+    : 0;
+  const previousBest = previousEarningData.length
+    ? Math.max(...previousEarningData.map((day) => day.earnings))
+    : 0;
+  const getChange = (current: number, previous: number) => {
+    if (!previousEarningData.length) return undefined;
+    if (previous === 0) return current > 0 ? null : 0;
+    return ((current - previous) / previous) * 100;
+  };
   const bestDay = earningData.find((day) => day.earnings === bestEarning);
   const selectedRange = EARNING_RANGES.find((item) => item.value === range)!;
   const periodDescription = appliedDates
@@ -150,6 +205,8 @@ function EarningDashboard({
       label: "Best day",
       value: formatCurrency(bestEarning),
       sub: bestDay ? formatDate(bestDay.date, true) : "No earnings yet",
+      change: getChange(bestEarning, previousBest),
+      comparison: "vs previous best",
       icon: <Star size={21} fill="currentColor" />,
       card: "border-amber-100 bg-amber-50/70",
       iconStyle: "bg-amber-100 text-amber-700",
@@ -159,6 +216,8 @@ function EarningDashboard({
       label: "Daily average",
       value: formatCurrency(average),
       sub: "per day",
+      change: getChange(average, previousAverage),
+      comparison: "vs previous period",
       icon: <BarChart3 size={21} />,
       card: "border-blue-100 bg-blue-50/70",
       iconStyle: "bg-blue-100 text-blue-700",
@@ -168,6 +227,8 @@ function EarningDashboard({
       label: "Period total",
       value: formatCurrency(total),
       sub: periodDescription,
+      change: getChange(total, previousTotal),
+      comparison: "vs previous period",
       icon: <Wallet size={21} />,
       card: "border-emerald-100 bg-emerald-50/70",
       iconStyle: "bg-emerald-100 text-emerald-700",
@@ -187,8 +248,11 @@ function EarningDashboard({
           </p>
         </div>
 
-        <form onSubmit={applyCustomDates} className="flex flex-wrap items-end gap-3">
-          <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+        <form
+          onSubmit={applyCustomDates}
+          className="grid min-w-0 grid-cols-2 gap-3 xl:flex xl:flex-wrap xl:items-end"
+        >
+          <label className="flex min-w-0 flex-col gap-1 text-xs font-medium text-slate-600 xl:w-auto">
             Start date
             <input
               type="date"
@@ -196,10 +260,10 @@ function EarningDashboard({
               max={getTodayDate()}
               onChange={(event) => setStartDate(event.target.value)}
               required
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-100"
+              className="w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-100 xl:w-auto"
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+          <label className="flex min-w-0 flex-col gap-1 text-xs font-medium text-slate-600 xl:w-auto">
             End date
             <input
               type="date"
@@ -208,10 +272,10 @@ function EarningDashboard({
               max={getTodayDate()}
               onChange={(event) => setEndDate(event.target.value)}
               required
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-100"
+              className="w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-100 xl:w-auto"
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+          <label className="flex min-w-0 flex-col gap-1 text-xs font-medium text-slate-600 xl:w-auto">
             Period
             <select
               value={range}
@@ -219,7 +283,7 @@ function EarningDashboard({
                 setRange(event.target.value as EarningRange);
                 setAppliedDates(undefined);
               }}
-              className="min-w-32 cursor-pointer rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-100"
+              className="w-full min-w-0 cursor-pointer rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 focus:ring-2 focus:ring-zinc-100 xl:min-w-32 xl:w-auto"
             >
               {EARNING_RANGES.map((item) => (
                 <option key={item.value} value={item.value}>
@@ -230,7 +294,7 @@ function EarningDashboard({
           </label>
           <button
             type="submit"
-            className="flex items-center gap-2 rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-zinc-800"
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-zinc-800 xl:w-auto"
           >
             <Filter size={16} />
             Apply dates
@@ -247,19 +311,51 @@ function EarningDashboard({
             transition={{ delay: index * 0.07, duration: 0.4 }}
             className={`rounded-2xl border p-4 sm:p-5 ${metric.card}`}
           >
-            <div className="flex items-start gap-4">
-              <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${metric.iconStyle}`}>
-                {metric.icon}
-              </span>
-              <div className="min-w-0">
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                  {metric.label}
+            <div className="flex min-w-0 items-center justify-between gap-2">
+              <div className="flex min-w-0 items-start gap-4">
+                <span
+                  className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${metric.iconStyle}`}
+                >
+                  {metric.icon}
+                </span>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                    {metric.label}
+                  </p>
+                  <p
+                    className={`mt-1 text-2xl font-black tracking-tight sm:text-3xl ${metric.valueStyle}`}
+                  >
+                    {metric.value}
+                  </p>
+                  <p className="mt-1 truncate text-sm text-slate-500">
+                    {metric.sub}
+                  </p>
+                </div>
+              </div>
+              <div className="shrink-0 text-right">
+                <p
+                  className={`flex items-center justify-end gap-1 text-xs font-bold sm:text-sm ${
+                    metric.change === undefined
+                      ? "text-slate-400"
+                      : metric.change === null || metric.change >= 0
+                        ? "text-emerald-600"
+                        : "text-red-600"
+                  }`}
+                >
+                  {metric.change === undefined
+                    ? "—"
+                    : metric.change === null
+                      ? "New"
+                      : `${metric.change > 0 ? "+" : ""}${Math.round(metric.change)}%`}
+                  {metric.change !== undefined &&
+                    (metric.change === null || metric.change >= 0 ? (
+                      <TrendingUp size={14} />
+                    ) : (
+                      <TrendingDown size={14} />
+                    ))}
                 </p>
-                <p className={`mt-1 text-2xl font-black tracking-tight sm:text-3xl ${metric.valueStyle}`}>
-                  {metric.value}
-                </p>
-                <p className="mt-1 truncate text-sm text-slate-500">
-                  {metric.sub}
+                <p className="mt-1 text-[10px] text-slate-500 sm:text-xs">
+                  {metric.comparison}
                 </p>
               </div>
             </div>
@@ -275,7 +371,9 @@ function EarningDashboard({
             </span>
             <div>
               <h3 className="font-bold text-zinc-900">Earnings overview</h3>
-              <p className="text-xs text-slate-500">{periodDescription} performance</p>
+              <p className="text-xs text-slate-500">
+                {periodDescription} performance
+              </p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600">
@@ -315,7 +413,9 @@ function EarningDashboard({
                 />
                 <XAxis
                   dataKey="date"
-                  tickFormatter={(date: string) => formatDate(date, range === "year")}
+                  tickFormatter={(date: string) =>
+                    formatDate(date, range === "year")
+                  }
                   tick={{ fontSize: 11, fill: "#71717a", fontWeight: 500 }}
                   axisLine={{ stroke: "#d4d4d8" }}
                   tickLine={false}
@@ -338,17 +438,23 @@ function EarningDashboard({
                     color: "#18181b",
                   }}
                   labelStyle={{ color: "#52525b" }}
-                  formatter={(value) => [formatCurrency(Number(value)), "Earnings"]}
+                  formatter={(value) => [
+                    formatCurrency(Number(value)),
+                    "Earnings",
+                  ]}
                   labelFormatter={(label) => formatDate(String(label), true)}
                 />
                 <Bar dataKey="earnings" radius={[7, 7, 2, 2]} maxBarSize={34}>
                   {earningData.map((day) => {
                     const isToday = day.date === getTodayDate();
-                    const isBest = day.earnings === bestEarning && bestEarning > 0;
+                    const isBest =
+                      day.earnings === bestEarning && bestEarning > 0;
                     return (
                       <Cell
                         key={day.date}
-                        fill={isToday ? "#10b981" : isBest ? "#f59e0b" : "#a1a1aa"}
+                        fill={
+                          isToday ? "#10b981" : isBest ? "#f59e0b" : "#a1a1aa"
+                        }
                         fillOpacity={isToday || isBest ? 1 : 0.82}
                       />
                     );
@@ -358,8 +464,16 @@ function EarningDashboard({
             </ResponsiveContainer>
           </motion.div>
         </AnimatePresence>
-        {loading && <p className="mt-2 text-center text-sm text-slate-500">Loading earnings...</p>}
-        {error && <p role="alert" className="mt-2 text-center text-sm text-red-600">{error}</p>}
+        {loading && (
+          <p className="mt-2 text-center text-sm text-slate-500">
+            Loading earnings...
+          </p>
+        )}
+        {error && (
+          <p role="alert" className="mt-2 text-center text-sm text-red-600">
+            {error}
+          </p>
+        )}
       </section>
 
       <div className="grid gap-4 lg:grid-cols-[1.1fr_1fr]">
@@ -370,9 +484,16 @@ function EarningDashboard({
           </h3>
           <div className="grid grid-cols-3 divide-x divide-zinc-200">
             {metrics.map((metric, index) => (
-              <div key={metric.label} className={`min-w-0 px-2 ${index === 0 ? "pl-0" : ""}`}>
-                <p className="truncate text-xs font-medium text-slate-500">{metric.label}</p>
-                <p className="mt-1 truncate text-lg font-extrabold">{metric.value}</p>
+              <div
+                key={metric.label}
+                className={`min-w-0 px-2 ${index === 0 ? "pl-0" : ""}`}
+              >
+                <p className="truncate text-xs font-medium text-slate-500">
+                  {metric.label}
+                </p>
+                <p className="mt-1 truncate text-lg font-extrabold">
+                  {metric.value}
+                </p>
                 <p className="mt-1 truncate text-xs text-slate-400">
                   {index === 0 && bestDay
                     ? formatDate(bestDay.date, true)
@@ -385,25 +506,43 @@ function EarningDashboard({
           </div>
         </section>
 
-        <section className="rounded-2xl border border-slate-100 bg-slate-50 p-5 text-slate-900 shadow-sm">
+        <section className="hidden rounded-2xl border border-slate-100 bg-slate-50 p-5 text-slate-900 shadow-sm md:block">
           <h3 className="mb-4 flex items-center gap-2 font-bold">
             <span className="text-lg">💡</span>
             Quick insights
           </h3>
           <ul className="space-y-3 text-sm text-slate-700">
             <li className="flex items-start gap-2">
-              <Check size={17} className="mt-0.5 shrink-0 rounded-full bg-emerald-100 p-0.5 text-emerald-600" />
-              {bestDay
-                ? <>Your best earning day was <strong>{formatDate(bestDay.date, true)}</strong> with <strong>{formatCurrency(bestEarning)}</strong>.</>
-                : "No completed earnings in this period yet."}
+              <Check
+                size={17}
+                className="mt-0.5 shrink-0 rounded-full bg-emerald-100 p-0.5 text-emerald-600"
+              />
+              {bestDay ? (
+                <>
+                  Your best earning day was
+                  <strong>{formatDate(bestDay.date, true)}</strong> with{" "}
+                  <strong>{formatCurrency(bestEarning)}</strong>.
+                </>
+              ) : (
+                "No completed earnings in this period yet."
+              )}
             </li>
             <li className="flex items-start gap-2">
-              <Check size={17} className="mt-0.5 shrink-0 rounded-full bg-emerald-100 p-0.5 text-emerald-600" />
-              Daily average earnings are <strong>{formatCurrency(average)}</strong> across {earningData.length} days.
+              <Check
+                size={17}
+                className="mt-0.5 shrink-0 rounded-full bg-emerald-100 p-0.5 text-emerald-600"
+              />
+              Daily average earnings are{" "}
+              <strong>{formatCurrency(average)}</strong> across{" "}
+              {earningData.length} days.
             </li>
             <li className="flex items-start gap-2">
-              <Check size={17} className="mt-0.5 shrink-0 rounded-full bg-emerald-100 p-0.5 text-emerald-600" />
-              Total earnings for {periodDescription.toLowerCase()} are <strong>{formatCurrency(total)}</strong>.
+              <Check
+                size={17}
+                className="mt-0.5 shrink-0 rounded-full bg-emerald-100 p-0.5 text-emerald-600"
+              />
+              Total earnings for {periodDescription.toLowerCase()} are{" "}
+              <strong>{formatCurrency(total)}</strong>.
             </li>
           </ul>
         </section>
